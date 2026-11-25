@@ -39,22 +39,114 @@ with st.sidebar:
     min_score = st.slider("Minimum signal score", 50, 95, 75, 1)
     refresh = st.button("🔄 Refresh market data", use_container_width=True)
 
-@st.cache_data(ttl=20, show_spinner=False)
-def fetch_klines(symbol, interval, limit, market):
-    base = FUTURES_BASE if market == "Futures" else SPOT_BASE
-    endpoint = "/fapi/v1/klines" if market == "Futures" else "/api/v3/klines"
-    url = base + endpoint
-    response = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=15)
-    response.raise_for_status()
-    raw = response.json()
-    if not isinstance(raw, list) or not raw:
-        raise ValueError("Binance returned no candle data.")
-    cols = ["open_time","open","high","low","close","volume","close_time","quote_volume","trades","taker_buy_base","taker_buy_quote","ignore"]
-    df = pd.DataFrame(raw, columns=cols)
-    for c in ["open","high","low","close","volume","quote_volume","taker_buy_base","taker_buy_quote"]:
+
+@st.cache_data(ttl=15)
+def get_market_data(symbol, market, interval, limit=500):
+
+    symbol = symbol.upper().replace("/", "").replace("-", "")
+
+    if market == "Spot":
+        url = "https://data-api.binance.vision/api/v3/klines"
+        r = requests.get(
+            url,
+            params={
+                "symbol": symbol,
+                "interval": interval,
+                "limit": limit
+            },
+            timeout=20
+        )
+        r.raise_for_status()
+        raw = r.json()
+
+        cols = [
+            "open_time", "open", "high", "low", "close",
+            "volume", "close_time", "quote_volume", "trades",
+            "taker_buy_base", "taker_buy_quote", "ignore"
+        ]
+
+        df = pd.DataFrame(raw, columns=cols)
+
+        price_url = "https://data-api.binance.vision/api/v3/ticker/price"
+        pr = requests.get(
+            price_url, params={"symbol": symbol}, timeout=20
+        )
+        pr.raise_for_status()
+        current_price = float(pr.json()["price"])
+
+    else:
+        api_key = st.secrets["COINBEACON_API_KEY"]
+
+        headers = {"X-API-Key": api_key}
+
+        # Binance USD-M Futures candles
+        url = (
+            "https://api.coinbeacon.io/public/ohlcv/"
+            f"binance-futures/{symbol}/{interval}"
+        )
+
+        r = requests.get(
+            url,
+            headers=headers,
+            params={"limit": limit},
+            timeout=20
+        )
+        r.raise_for_status()
+
+        bars = r.json().get("bars", [])
+
+        if not bars:
+            raise ValueError(
+                f"No Futures candle data found for {symbol}"
+            )
+
+        df = pd.DataFrame(bars)
+
+        df = df.rename(columns={
+            "openTime": "open_time",
+            "closeTime": "close_time",
+            "quoteVolume": "quote_volume",
+            "takerBuyVolume": "taker_buy_base",
+            "takerBuyQuoteVolume": "taker_buy_quote"
+        })
+
+        df["trades"] = 0
+        df["ignore"] = 0
+
+        # Get live Futures quote
+        quote_url = (
+            "https://api.coinbeacon.io/public/market/quotes/batch"
+        )
+
+        qr = requests.get(
+            quote_url,
+            headers=headers,
+            params={"m": f"binance-futures:{symbol}"},
+            timeout=20
+        )
+        qr.raise_for_status()
+
+        quotes = qr.json().get("quotes", [])
+
+        if not quotes or quotes[0].get("price") is None:
+            raise ValueError("Futures live price unavailable")
+
+        current_price = float(quotes[0]["price"])
+
+    for c in ["open", "high", "low", "close", "volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    df["time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
-    return df.dropna().reset_index(drop=True)
+
+    if market == "Spot":
+        df["open_time"] = pd.to_datetime(
+            df["open_time"], unit="ms", utc=True
+        )
+    else:
+        df["open_time"] = pd.to_datetime(
+            df["open_time"], unit="ms", utc=True
+        )
+
+    return df, current_price
+
 
 def add_indicators(df):
     d = df.copy()

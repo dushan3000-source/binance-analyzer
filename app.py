@@ -74,26 +74,41 @@ def get_market_data(symbol, market, interval, limit=500):
         pr.raise_for_status()
         current_price = float(pr.json()["price"])
 
-    else:
-        api_key = st.secrets["COINBEACON_API_KEY"]
-
-        headers = {"X-API-Key": api_key}
-
-        # Binance USD-M Futures candles
-        url = (
-            "https://api.coinbeacon.io/public/ohlcv/"
-            f"binance-futures/{symbol}/{interval}"
-        )
+       else:
+        # Binance USD-M Futures public API
+        url = f"{FUTURES_BASE}/fapi/v1/klines"
 
         r = requests.get(
             url,
-            headers=headers,
-            params={"limit": limit},
+            params={
+                "symbol": symbol,
+                "interval": interval,
+                "limit": limit
+            },
             timeout=20
         )
         r.raise_for_status()
 
-        bars = r.json().get("bars", [])
+        raw = r.json()
+
+        cols = [
+            "open_time", "open", "high", "low", "close",
+            "volume", "close_time", "quote_volume", "trades",
+            "taker_buy_base", "taker_buy_quote", "ignore"
+        ]
+
+        df = pd.DataFrame(raw, columns=cols)
+
+        quote_url = f"{FUTURES_BASE}/fapi/v1/ticker/price"
+
+        qr = requests.get(
+            quote_url,
+            params={"symbol": symbol},
+            timeout=20
+        )
+        qr.raise_for_status()
+
+        current_price = float(qr.json()["price"])
 
         if not bars:
             raise ValueError(

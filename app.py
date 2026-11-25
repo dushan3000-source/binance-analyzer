@@ -125,7 +125,20 @@ def get_market_data(symbol, market, interval, limit=500):
 
 
        else:
+               for c in ["open", "high", "low", "close", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df["open_time"] = pd.to_datetime(
+        df["open_time"],
+        unit="ms",
+        utc=True
+    )
+
+    df["time"] = df["open_time"]
+
+    return df, current_price
         # Binance USD-M Futures public API
+           
         url = f"{FUTURES_BASE}/fapi/v1/klines"
 
         r = requests.get(

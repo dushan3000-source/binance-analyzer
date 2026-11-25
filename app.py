@@ -312,8 +312,7 @@ st.caption(f"Last candle time: {last.time.strftime('%Y-%m-%d %H:%M UTC')} | Data
 st.subheader("Multi-Timeframe Trend Confirmation")
 mtf_cols = st.columns(3)
 for col, tf in zip(mtf_cols, ["15m", "1h", "4h"]):
-    try:
-        tf_raw = fetch_klines(symbol, tf, 250, market)
+    tf_raw, _ = get_market_data(symbol, market, tf, 250)
         tf_df = add_indicators(tf_raw)
         tf_last = tf_df.iloc[-1]
         if tf_last.close > tf_last.ema50 > tf_last.ema200:

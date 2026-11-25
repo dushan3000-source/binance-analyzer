@@ -301,7 +301,7 @@ else:
     signal, signal_color = "WAIT", "orange"
 
 c1,c2,c3,c4 = st.columns(4)
-c1.metric("Last Price", f"{last.close:,.4f} USDT")
+c1.metric("Live Price", f"{current_price:,.4f} USDT")
 c2.metric("Long Score", f"{long_score}/100")
 c3.metric("Short Score", f"{short_score}/100")
 c4.metric("Signal", signal)

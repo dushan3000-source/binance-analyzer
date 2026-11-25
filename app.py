@@ -272,9 +272,11 @@ if refresh:
 
 try:
     with st.spinner("Fetching market data..."):
+
         raw, current_price = get_market_data(
             symbol, market, interval, limit
         )
+
         df = add_indicators(raw)
 
     if len(df) < 210:
@@ -285,18 +287,15 @@ try:
     long_score, short_score, checks, reasons, bull_div, bear_div = analyze(df)
 
 except Exception as e:
+
     st.error(f"Could not load market data: {e}")
+
     st.info(
-        "Check the symbol, API connection, and market settings."
+        "Check the symbol, internet connection, and Binance API availability."
     )
+
     st.stop()
-    if len(df) < 210:
-        st.warning("For EMA200 and stable analysis, load at least 210 candles.")
-    long_score, short_score, checks, reasons, bull_div, bear_div = analyze(df)
-except Exception as e:
-    st.error(f"Could not load market data: {e}")
-    st.info("Check the symbol (example BTCUSDT), internet connection, and Binance API availability.")
-    st.stop()
+
 
 last = df.iloc[-1]
 risk_amount = balance * (risk_pct / 100)

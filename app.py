@@ -193,7 +193,7 @@ def add_indicators(df):
     d["pivot_low"] = low.where((low == low.rolling(11, center=True).min()))
     return d
 
-def divergence_flags(d):
+add("TSI Divergence", bull_div, bear_div, 15,
     # Heuristic swing comparison; not a full pivot-confirmed divergence engine.
     if len(d) < 40:
         return False, False

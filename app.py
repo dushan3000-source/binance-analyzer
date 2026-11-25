@@ -322,22 +322,48 @@ c4.metric("Signal", signal)
 
 st.caption(f"Last candle time: {last.time.strftime('%Y-%m-%d %H:%M UTC')} | Data: Binance public market endpoint")
 
-# Higher-timeframe context (confirmation panel; it does not override the main signal)
+# Higher-timeframe context
 st.subheader("Multi-Timeframe Trend Confirmation")
+
 mtf_cols = st.columns(3)
+
 for col, tf in zip(mtf_cols, ["15m", "1h", "4h"]):
-    tf_raw, _ = get_market_data(symbol, market, tf, 250)
+
+    try:
+
+        tf_raw, _ = get_market_data(
+            symbol, market, tf, 250
+        )
+
         tf_df = add_indicators(tf_raw)
+
         tf_last = tf_df.iloc[-1]
+
         if tf_last.close > tf_last.ema50 > tf_last.ema200:
+
             mtf_state = "Bullish"
+
         elif tf_last.close < tf_last.ema50 < tf_last.ema200:
+
             mtf_state = "Bearish"
+
         else:
+
             mtf_state = "Mixed"
-        col.metric(tf, mtf_state, f"Close {tf_last.close:,.4f}")
-    except Exception:
-        col.metric(tf, "Unavailable", "Could not load")
+
+        col.metric(
+            tf,
+            mtf_state,
+            f"Close {tf_last.close:,.4f}"
+        )
+
+    except Exception as e:
+
+        col.metric(
+            tf,
+            "Unavailable",
+            "Could not load"
+        )
 
 if signal in ["BUY", "LONG", "SHORT"]:
     st.success(f"Potential {signal} setup meets the selected score threshold. Confirm candle close and higher-timeframe context before trading.")

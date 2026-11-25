@@ -1,11 +1,14 @@
 import os
-import io
 import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from datetime import datetime, timezone
+
+# ============================================================
+# AI TRADING ANALYST PRO — Binance Spot + USD-M Futures
+# Rule-based analysis only. No order execution.
+# ============================================================
 
 st.set_page_config(page_title="AI Trading Analyst PRO", page_icon="📈", layout="wide")
 
@@ -15,124 +18,114 @@ INTERVALS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"]
 
 st.markdown("""
 <style>
-.block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
-.metric-card {background: rgba(120,120,120,.08); padding: 14px; border-radius: 12px;}
+.block-container {padding-top: 1.1rem; padding-bottom: 2rem;}
+div[data-testid="stMetric"] {background: rgba(120,120,120,.07); padding: 12px; border-radius: 10px;}
 .small-note {font-size: .85rem; opacity: .8;}
 </style>
 """, unsafe_allow_html=True)
 
 st.title("📈 AI Trading Analyst PRO")
-st.caption("Binance Spot + USDⓈ-M Futures | Multi-indicator analysis | Signal-only starter build")
+st.caption("Binance Spot + USDⓈ-M Futures • Structure • Order-book liquidity • Risk-first trade planning")
+
+# --------------------------- Sidebar ---------------------------
 
 with st.sidebar:
     st.header("Market Settings")
     market = st.selectbox("Market", ["Spot", "Futures"])
-    symbol = st.text_input("Symbol", "BTCUSDT").upper().replace("/", "").strip()
+    symbol = st.text_input("Symbol", "BTCUSDT").upper().replace("/", "").replace("-", "").strip()
     interval = st.selectbox("Main timeframe", INTERVALS, index=2)
-    limit = st.slider("Candles", 200, 1000, 500, 100)
+    limit = st.slider("Candles", 210, 1000, 500, 50)
     st.divider()
     st.subheader("Risk Management")
     balance = st.number_input("Account balance (USDT)", min_value=0.0, value=1000.0, step=100.0)
     risk_pct = st.number_input("Risk per trade (%)", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
-    st.caption("Position sizing is an estimate. Fees, slippage, funding and leverage are not included.")
-    st.divider()
-    min_score = st.slider("Minimum signal score", 50, 95, 75, 1)
+    rr1 = st.number_input("TP1 risk/reward (R)", min_value=0.5, max_value=5.0, value=1.5, step=0.5)
+    rr2 = st.number_input("TP2 risk/reward (R)", min_value=1.0, max_value=10.0, value=2.5, step=0.5)
+    rr3 = st.number_input("TP3 risk/reward (R)", min_value=1.5, max_value=15.0, value=3.5, step=0.5)
+    min_score = st.slider("Minimum confluence score", 50, 95, 70, 1)
+    st.caption("Position sizing is an estimate. Fees, slippage, funding, leverage and contract rules are excluded.")
     refresh = st.button("🔄 Refresh market data", use_container_width=True)
 
-
+# --------------------------- Data ---------------------------
 
 @st.cache_data(ttl=15)
 def get_market_data(symbol, market, interval, limit=500):
-
     symbol = symbol.upper().replace("/", "").replace("-", "")
+    if not symbol.isalnum():
+        raise ValueError("Enter a valid Binance symbol, e.g. BTCUSDT.")
 
     if market == "Spot":
-
-        url = f"{SPOT_BASE}/api/v3/klines"
-
-        r = requests.get(
-            url,
-            params={
-                "symbol": symbol,
-                "interval": interval,
-                "limit": limit
-            },
-            timeout=20
-        )
-
-        r.raise_for_status()
-        raw = r.json()
-
-        cols = [
-            "open_time", "open", "high", "low", "close",
-            "volume", "close_time", "quote_volume", "trades",
-            "taker_buy_base", "taker_buy_quote", "ignore"
-        ]
-
-        df = pd.DataFrame(raw, columns=cols)
-
-        price_url = f"{SPOT_BASE}/api/v3/ticker/price"
-
+        base, path = SPOT_BASE, "/api/v3/klines"
+        ticker_path = "/api/v3/ticker/price"
     else:
+        base, path = FUTURES_BASE, "/fapi/v1/klines"
+        ticker_path = "/fapi/v1/ticker/price"
 
-        url = f"{FUTURES_BASE}/fapi/v1/klines"
-
-        r = requests.get(
-            url,
-            params={
-                "symbol": symbol,
-                "interval": interval,
-                "limit": limit
-            },
-            timeout=20
-        )
-
-        r.raise_for_status()
-        raw = r.json()
-
-        cols = [
-            "open_time", "open", "high", "low", "close",
-            "volume", "close_time", "quote_volume", "trades",
-            "taker_buy_base", "taker_buy_quote", "ignore"
-        ]
-
-        df = pd.DataFrame(raw, columns=cols)
-
-        price_url = f"{FUTURES_BASE}/fapi/v1/ticker/price"
-
-    pr = requests.get(
-        price_url,
-        params={"symbol": symbol},
-        timeout=20
+    response = requests.get(
+        base + path,
+        params={"symbol": symbol, "interval": interval, "limit": int(limit)},
+        timeout=20,
     )
+    response.raise_for_status()
+    raw = response.json()
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"No candle data returned for {symbol}.")
 
-    pr.raise_for_status()
+    cols = [
+        "open_time", "open", "high", "low", "close", "volume",
+        "close_time", "quote_volume", "trades", "taker_buy_base",
+        "taker_buy_quote", "ignore",
+    ]
+    df = pd.DataFrame(raw, columns=cols)
 
-    current_price = float(pr.json()["price"])
+    ticker = requests.get(base + ticker_path, params={"symbol": symbol}, timeout=15)
+    ticker.raise_for_status()
+    current_price = float(ticker.json()["price"])
 
-    for c in ["open", "high", "low", "close", "volume"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    df["open_time"] = pd.to_datetime(
-        df["open_time"],
-        unit="ms",
-        utc=True
-    )
-
+    numeric = ["open", "high", "low", "close", "volume", "taker_buy_base", "quote_volume"]
+    for col in numeric:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
     df["time"] = df["open_time"]
-
-        for c in ["open", "high", "low", "close", "volume"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    df["open_time"] = pd.to_datetime(
-        df["open_time"],
-        unit="ms",
-        utc=True
-    )
-
-    df["time"] = df["open_time"]
-
+    df = df.dropna(subset=["open", "high", "low", "close", "volume"]).reset_index(drop=True)
+    if len(df) < 50:
+        raise ValueError("Not enough valid candles returned.")
     return df, current_price
+
+
+@st.cache_data(ttl=8)
+def get_order_book(symbol, market, depth_limit=100):
+    """Fetch public DOM snapshot. This is a snapshot, not historical order flow."""
+    base = SPOT_BASE if market == "Spot" else FUTURES_BASE
+    path = "/api/v3/depth" if market == "Spot" else "/fapi/v1/depth"
+    response = requests.get(
+        base + path,
+        params={"symbol": symbol, "limit": depth_limit},
+        timeout=15,
+    )
+    response.raise_for_status()
+    book = response.json()
+    bids = [(float(p), float(q)) for p, q in book.get("bids", [])]
+    asks = [(float(p), float(q)) for p, q in book.get("asks", [])]
+    if not bids or not asks:
+        raise ValueError("Order book is empty.")
+    bid_qty = sum(q for _, q in bids[:20])
+    ask_qty = sum(q for _, q in asks[:20])
+    total = bid_qty + ask_qty
+    imbalance = (bid_qty - ask_qty) / total if total else 0.0
+    best_bid, best_ask = bids[0][0], asks[0][0]
+    mid = (best_bid + best_ask) / 2
+    spread_pct = ((best_ask - best_bid) / mid * 100) if mid else np.nan
+    bid_wall = max(bids[:20], key=lambda x: x[1])
+    ask_wall = max(asks[:20], key=lambda x: x[1])
+    return {
+        "bid_qty": bid_qty, "ask_qty": ask_qty, "imbalance": imbalance,
+        "spread_pct": spread_pct, "best_bid": best_bid, "best_ask": best_ask,
+        "bid_wall": bid_wall, "ask_wall": ask_wall,
+    }
+
+
+# --------------------------- Indicators ---------------------------
 
 def add_indicators(df):
     d = df.copy()
@@ -141,298 +134,436 @@ def add_indicators(df):
     d["sma50"] = close.rolling(50).mean()
     for n in [9, 21, 50, 200]:
         d[f"ema{n}"] = close.ewm(span=n, adjust=False).mean()
+
     delta = close.diff()
     gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
     rs = gain / loss.replace(0, np.nan)
     d["rsi"] = 100 - (100 / (1 + rs))
+
     prev_close = close.shift(1)
-    tr = pd.concat([(high-low), (high-prev_close).abs(), (low-prev_close).abs()], axis=1).max(axis=1)
+    tr = pd.concat(
+        [(high - low), (high - prev_close).abs(), (low - prev_close).abs()],
+        axis=1,
+    ).max(axis=1)
     d["atr"] = tr.ewm(alpha=1/14, adjust=False).mean()
-    tp = (high + low + close) / 3
-    d["vwap"] = (tp * vol).cumsum() / vol.cumsum().replace(0, np.nan)
-    # TSI: double-smoothed momentum oscillator
+
+    typical = (high + low + close) / 3
+    d["vwap"] = (typical * vol).cumsum() / vol.cumsum().replace(0, np.nan)
+
     mom = close.diff()
-    abs_mom = mom.abs()
-    sm1 = mom.ewm(span=25, adjust=False).mean().ewm(span=13, adjust=False).mean()
-    sa1 = abs_mom.ewm(span=25, adjust=False).mean().ewm(span=13, adjust=False).mean()
-    d["tsi"] = 100 * sm1 / sa1.replace(0, np.nan)
+    smoothed_mom = mom.ewm(span=25, adjust=False).mean().ewm(span=13, adjust=False).mean()
+    smoothed_abs = mom.abs().ewm(span=25, adjust=False).mean().ewm(span=13, adjust=False).mean()
+    d["tsi"] = 100 * smoothed_mom / smoothed_abs.replace(0, np.nan)
     d["vol_sma20"] = vol.rolling(20).mean()
-    # Pivot-based S/R zones
-    d["pivot_high"] = high.where((high == high.rolling(11, center=True).max()))
-    d["pivot_low"] = low.where((low == low.rolling(11, center=True).min()))
+
+    # Approximate aggressive-buy volume ratio from Binance kline taker-buy field.
+    d["buy_ratio"] = d["taker_buy_base"] / d["volume"].replace(0, np.nan)
+    d["buy_ratio"] = d["buy_ratio"].clip(0, 1)
+    d["sell_ratio"] = 1 - d["buy_ratio"]
     return d
 
-add(
-    "TSI Divergence",
-    bull_div,
-    bear_div,
-    15,
-    "Bullish divergence" if bull_div
-    else "Bearish divergence" if bear_div
-    else "No divergence"
-)
-    # Heuristic swing comparison; not a full pivot-confirmed divergence engine.
-    if len(d) < 40:
-        return False, False
-    recent = d.tail(30).reset_index(drop=True)
-    p1 = recent.iloc[:15]
-    p2 = recent.iloc[15:]
-    low1, low2 = p1.low.min(), p2.low.min()
-    rsi_low1, rsi_low2 = p1.loc[p1.low.idxmin(), "tsi"], p2.loc[p2.low.idxmin(), "tsi"]
-    high1, high2 = p1.high.max(), p2.high.max()
-    rsi_high1, rsi_high2 = p1.loc[p1.high.idxmax(), "tsi"], p2.loc[p2.high.idxmax(), "tsi"]
-    bull = low2 < low1 and rsi_low2 > rsi_low1
-    bear = high2 > high1 and rsi_high2 < rsi_high1
-    return bool(bull), bool(bear)
-add("TSI Divergence"...
+
 def divergence_flags(d):
-
     if len(d) < 40:
         return False, False
-
     recent = d.tail(30).reset_index(drop=True)
+    first, second = recent.iloc[:15], recent.iloc[15:]
+    low1, low2 = first.low.min(), second.low.min()
+    tsi_low1 = first.loc[first.low.idxmin(), "tsi"]
+    tsi_low2 = second.loc[second.low.idxmin(), "tsi"]
+    high1, high2 = first.high.max(), second.high.max()
+    tsi_high1 = first.loc[first.high.idxmax(), "tsi"]
+    tsi_high2 = second.loc[second.high.idxmax(), "tsi"]
+    bullish = low2 < low1 and tsi_low2 > tsi_low1
+    bearish = high2 > high1 and tsi_high2 < tsi_high1
+    return bool(bullish), bool(bearish)
 
-    p1 = recent.iloc[:15]
-    p2 = recent.iloc[15:]
 
-    low1, low2 = p1.low.min(), p2.low.min()
+# --------------------------- Market structure ---------------------------
 
-    tsi_low1 = p1.loc[p1.low.idxmin(), "tsi"]
-    tsi_low2 = p2.loc[p2.low.idxmin(), "tsi"]
+def find_support_resistance(d, price):
+    """Recent confirmed-ish swing levels; clustered into practical nearby levels."""
+    window = d.tail(180).copy()
+    ph = window.high[(window.high.shift(1) < window.high) & (window.high.shift(-1) < window.high)]
+    pl = window.low[(window.low.shift(1) > window.low) & (window.low.shift(-1) > window.low)]
+    highs = sorted([float(x) for x in ph.dropna() if x > price])
+    lows = sorted([float(x) for x in pl.dropna() if x < price], reverse=True)
+    resistance = highs[0] if highs else float(window.high.max())
+    support = lows[0] if lows else float(window.low.min())
+    return support, resistance, lows[:5], highs[:5]
 
-    high1, high2 = p1.high.max(), p2.high.max()
 
-    tsi_high1 = p1.loc[p1.high.idxmax(), "tsi"]
-    tsi_high2 = p2.loc[p2.high.idxmax(), "tsi"]
-
-    bull = low2 < low1 and tsi_low2 > tsi_low1
-
-    bear = high2 > high1 and tsi_high2 < tsi_high1
-
-    return bool(bull), bool(bear)
-
-def analyze(d):
+def detect_reversal(d, support, resistance, book):
     last = d.iloc[-1]
-    prev = d.iloc[-2]
-    score_long, score_short = 0, 0
-    reasons = []
+    candle_range = max(float(last.high - last.low), 1e-12)
+    lower_wick = min(last.open, last.close) - last.low
+    upper_wick = last.high - max(last.open, last.close)
+    lower_ratio = lower_wick / candle_range
+    upper_ratio = upper_wick / candle_range
+    vol_ratio = (last.volume / last.vol_sma20) if pd.notna(last.vol_sma20) and last.vol_sma20 > 0 else 0
+    swept_support = last.low < support and last.close > support
+    swept_resistance = last.high > resistance and last.close < resistance
+    bullish_reversal = (swept_support or (lower_ratio > 0.45 and last.close > last.open)) and last.rsi < 55
+    bearish_reversal = (swept_resistance or (upper_ratio > 0.45 and last.close < last.open)) and last.rsi > 45
+    # Absorption is a candle/volume/taker-flow heuristic, not proof of hidden orders.
+    bullish_absorption = lower_ratio > 0.40 and vol_ratio > 1.2 and last.buy_ratio < 0.58
+    bearish_absorption = upper_ratio > 0.40 and vol_ratio > 1.2 and last.buy_ratio > 0.42
+    # DOM imbalance is a short-lived order-book snapshot.
+    bullish_dom = book is not None and book["imbalance"] > 0.12
+    bearish_dom = book is not None and book["imbalance"] < -0.12
+    return {
+        "lower_wick_ratio": lower_ratio, "upper_wick_ratio": upper_ratio,
+        "volume_ratio": vol_ratio, "swept_support": bool(swept_support),
+        "swept_resistance": bool(swept_resistance),
+        "bullish_reversal": bool(bullish_reversal),
+        "bearish_reversal": bool(bearish_reversal),
+        "bullish_absorption": bool(bullish_absorption),
+        "bearish_absorption": bool(bearish_absorption),
+        "bullish_dom": bool(bullish_dom), "bearish_dom": bool(bearish_dom),
+    }
+
+
+# --------------------------- Scoring ---------------------------
+
+def analyze(d, book, support, resistance):
+    last, prev = d.iloc[-1], d.iloc[-2]
+    long_score = 0
+    short_score = 0
     checks = []
+    reasons = []
 
     def add(name, long_ok, short_ok, weight, detail):
-        nonlocal score_long, score_short
-        if long_ok: score_long += weight
-        if short_ok: score_short += weight
-        checks.append((name, "Bullish" if long_ok and not short_ok else "Bearish" if short_ok and not long_ok else "Mixed" if long_ok and short_ok else "Neutral", weight))
+        nonlocal long_score, short_score
+        if long_ok:
+            long_score += weight
+        if short_ok:
+            short_score += weight
+        state = "Bullish" if long_ok and not short_ok else "Bearish" if short_ok and not long_ok else "Mixed" if long_ok and short_ok else "Neutral"
+        checks.append((name, state, weight))
         reasons.append(f"{name}: {detail}")
 
-    add("MA / EMA trend", last.ema50 > last.ema200 and last.close > last.sma50,
-        last.ema50 < last.ema200 and last.close < last.sma50, 15,
-        f"EMA50 {last.ema50:.4f}, EMA200 {last.ema200:.4f}")
-    add("RSI", 50 < last.rsi < 70, 30 < last.rsi < 50, 10, f"RSI {last.rsi:.1f}")
-    # Approximate local structure break
+    trend_up = last.close > last.ema50 > last.ema200
+    trend_down = last.close < last.ema50 < last.ema200
+    add("EMA trend", trend_up, trend_down, 15, f"EMA50 {last.ema50:.4f} / EMA200 {last.ema200:.4f}")
+
+    add("RSI momentum", 50 < last.rsi < 70, 30 < last.rsi < 50, 8, f"RSI {last.rsi:.1f}")
+
     prior_high = d.high.iloc[-21:-1].max()
     prior_low = d.low.iloc[-21:-1].min()
-    bull_bos, bear_bos = last.close > prior_high, last.close < prior_low
-    add("SNR / Structure", bull_bos, bear_bos, 15, "Break above 20-candle high" if bull_bos else "Break below 20-candle low" if bear_bos else "No confirmed 20-candle breakout")
-    # Lightweight SMC proxies: BOS + three-candle FVG
+    bull_bos = last.close > prior_high
+    bear_bos = last.close < prior_low
+    add("Break of structure", bull_bos, bear_bos, 12, "Bullish BOS" if bull_bos else "Bearish BOS" if bear_bos else "No 20-candle close break")
+
     bull_fvg = d.low.iloc[-1] > d.high.iloc[-3]
     bear_fvg = d.high.iloc[-1] < d.low.iloc[-3]
-    add("SMC proxy", bull_bos or bull_fvg, bear_bos or bear_fvg, 15,
-        "BOS/FVG proxy detected" if (bull_bos or bear_bos or bull_fvg or bear_fvg) else "No BOS/FVG proxy")
-    # Elliott wave is intentionally treated as weak heuristic, not automated wave labeling.
-    momentum_up = last.close > last.ema21 and last.ema21 > prev.ema21
-    momentum_dn = last.close < last.ema21 and last.ema21 < prev.ema21
-    add("Elliott momentum proxy", momentum_up, momentum_dn, 10, "EMA21 slope/momentum proxy; not formal wave count")
-    vol_ok = last.volume > 1.5 * last.vol_sma20 if pd.notna(last.vol_sma20) else False
-    add("Volume", vol_ok and last.close > last.open, vol_ok and last.close < last.open, 10,
-        f"Volume / 20-SMA = {last.volume / last.vol_sma20:.2f}" if last.vol_sma20 else "Volume baseline unavailable")
-    add("VWAP", last.close > last.vwap, last.close < last.vwap, 5, f"Close {last.close:.4f} vs VWAP {last.vwap:.4f}")
-    # ATR is used for sizing/stops, not directional edge; award only if ATR is finite and nonzero.
-    atr_ok = pd.notna(last.atr) and last.atr > 0
-    add("ATR volatility", atr_ok, atr_ok, 5, f"ATR {last.atr:.6f}" if atr_ok else "ATR unavailable")
-    bull_div, bear_div = divergence_flags(d)
-    add("TSI / RSI divergence", bull_div, bear_div, 15,
-        "Bullish divergence" if bull_div else "Bearish divergence" if bear_div else "No divergence")
+    add("Fair value gap proxy", bull_fvg, bear_fvg, 7, "3-candle imbalance proxy")
 
-    # normalize because neutral checks can contribute to both; raw max remains 100
-    return score_long, score_short, checks, reasons, bull_div, bear_div
+    add("VWAP", last.close > last.vwap, last.close < last.vwap, 6, f"Close {last.close:.4f} / VWAP {last.vwap:.4f}")
+    add("Volume confirmation",
+        last.volume > 1.3 * last.vol_sma20 and last.close > last.open if pd.notna(last.vol_sma20) else False,
+        last.volume > 1.3 * last.vol_sma20 and last.close < last.open if pd.notna(last.vol_sma20) else False,
+        8, f"Volume ratio {last.volume / last.vol_sma20:.2f}" if pd.notna(last.vol_sma20) and last.vol_sma20 else "Unavailable")
+
+    bull_div, bear_div = divergence_flags(d)
+    add("TSI divergence", bull_div, bear_div, 8, "Bullish divergence" if bull_div else "Bearish divergence" if bear_div else "No divergence")
+
+    reversal = detect_reversal(d, support, resistance, book)
+    add("Market reversal / liquidity sweep",
+        reversal["bullish_reversal"], reversal["bearish_reversal"], 10,
+        "Bullish rejection/sweep" if reversal["bullish_reversal"] else "Bearish rejection/sweep" if reversal["bearish_reversal"] else "No clear reversal")
+
+    add("Absorption estimate",
+        reversal["bullish_absorption"], reversal["bearish_absorption"], 8,
+        "Possible buy-side absorption" if reversal["bullish_absorption"] else "Possible sell-side absorption" if reversal["bearish_absorption"] else "No strong absorption pattern")
+
+    add("DOM liquidity imbalance",
+        reversal["bullish_dom"], reversal["bearish_dom"], 8,
+        f"Bid/ask imbalance {book['imbalance']:+.1%}" if book else "DOM unavailable")
+
+    near_support = abs(last.close - support) <= 1.0 * last.atr
+    near_resistance = abs(resistance - last.close) <= 1.0 * last.atr
+    add("Support / resistance location", near_support, near_resistance, 10,
+        f"Support {support:.4f} / Resistance {resistance:.4f}")
+
+    return min(long_score, 100), min(short_score, 100), checks, reasons, reversal
+
+
+# --------------------------- Telegram ---------------------------
 
 def send_telegram(message):
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or str(st.secrets.get("TELEGRAM_BOT_TOKEN", "")).strip()
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip() or str(st.secrets.get("TELEGRAM_CHAT_ID", "")).strip()
-    if not token or not chat_id:
-        return False, "Telegram credentials are not configured."
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     try:
-        r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                          data={"chat_id": chat_id, "text": message}, timeout=12)
-        r.raise_for_status()
+        if not token:
+            token = str(st.secrets.get("TELEGRAM_BOT_TOKEN", "")).strip()
+        if not chat_id:
+            chat_id = str(st.secrets.get("TELEGRAM_CHAT_ID", "")).strip()
+    except Exception:
+        pass
+    if not token or not chat_id:
+        return False, "Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to environment variables or Streamlit secrets."
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": message},
+            timeout=12,
+        )
+        response.raise_for_status()
         return True, "Telegram alert sent."
-    except Exception as e:
-        return False, f"Telegram error: {e}"
+    except Exception as exc:
+        return False, f"Telegram error: {exc}"
+
+
+# --------------------------- Main analysis ---------------------------
 
 if refresh:
     st.cache_data.clear()
 
 try:
-    with st.spinner("Fetching market data..."):
+    with st.spinner("Loading Binance candles and live order book..."):
+        candles, current_price = get_market_data(symbol, market, interval, limit)
+        df = add_indicators(candles)
+        try:
+            order_book = get_order_book(symbol, market)
+            book_error = None
+        except Exception as exc:
+            order_book = None
+            book_error = str(exc)
 
-        raw, current_price = get_market_data(
-            symbol, market, interval, limit
-        )
-
-        df = add_indicators(raw)
-
-    if len(df) < 210:
-        st.warning(
-            "For EMA200 and stable analysis, load at least 210 candles."
-        )
-
-    long_score, short_score, checks, reasons, bull_div, bear_div = analyze(df)
-
-except Exception as e:
-
-    st.error(f"Could not load market data: {e}")
-
-    st.info(
-        "Check the symbol, internet connection, and Binance API availability."
-    )
-
+    last = df.iloc[-1]
+    support, resistance, support_levels, resistance_levels = find_support_resistance(df, current_price)
+    long_score, short_score, checks, reasons, reversal = analyze(df, order_book, support, resistance)
+except Exception as exc:
+    st.error(f"Could not load/analyze market data: {exc}")
+    st.info("Check the symbol, connection and Binance API availability.")
     st.stop()
 
-
-last = df.iloc[-1]
-risk_amount = balance * (risk_pct / 100)
-atr_stop_distance = 1.5 * last.atr if pd.notna(last.atr) else np.nan
-qty = risk_amount / atr_stop_distance if atr_stop_distance and np.isfinite(atr_stop_distance) else np.nan
 long_ready = long_score >= min_score and long_score > short_score
 short_ready = short_score >= min_score and short_score > long_score
-
 if long_ready:
     signal = "BUY" if market == "Spot" else "LONG"
-    signal_color = "green"
-elif short_ready and market == "Futures":
-    signal, signal_color = "SHORT", "red"
-elif short_ready and market == "Spot":
-    signal, signal_color = "NO BUY"
+elif short_ready:
+    signal = "NO BUY" if market == "Spot" else "SHORT"
 else:
-    signal, signal_color = "WAIT", "orange"
+    signal = "WAIT"
 
-c1,c2,c3,c4 = st.columns(4)
-c1.metric("Live Price", f"{current_price:,.4f} USDT")
-c2.metric("Long Score", f"{long_score}/100")
-c3.metric("Short Score", f"{short_score}/100")
-c4.metric("Signal", signal)
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Live Price", f"{current_price:,.4f}")
+m2.metric("Long Score", f"{long_score}/100")
+m3.metric("Short Score", f"{short_score}/100")
+m4.metric("Signal", signal)
+m5.metric("RSI", f"{last.rsi:.1f}")
+st.caption(f"Last candle: {last.time.strftime('%Y-%m-%d %H:%M UTC')} • Public Binance market data • Scores are confluence points, not win probabilities.")
 
-st.caption(f"Last candle time: {last.time.strftime('%Y-%m-%d %H:%M UTC')} | Data: Binance public market endpoint")
+# --------------------------- Structure + DOM ---------------------------
 
-# Higher-timeframe context
-st.subheader("Multi-Timeframe Trend Confirmation")
+st.subheader("📍 Support & Resistance")
+s1, s2, s3 = st.columns(3)
+s1.metric("Nearest Support", f"{support:,.4f}", f"{(current_price-support)/current_price*100:.2f}% below" if current_price else None)
+s2.metric("Current Price", f"{current_price:,.4f}")
+s3.metric("Nearest Resistance", f"{resistance:,.4f}", f"{(resistance-current_price)/current_price*100:.2f}% above" if current_price else None)
 
+if support_levels:
+    st.write("Nearby support levels:", " • ".join(f"{x:,.4f}" for x in support_levels[:5]))
+if resistance_levels:
+    st.write("Nearby resistance levels:", " • ".join(f"{x:,.4f}" for x in resistance_levels[:5]))
+
+st.subheader("📚 DOM / Order-book Liquidity")
+if order_book:
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Bid liquidity (top 20)", f"{order_book['bid_qty']:,.3f}")
+    d2.metric("Ask liquidity (top 20)", f"{order_book['ask_qty']:,.3f}")
+    d3.metric("Bid/Ask imbalance", f"{order_book['imbalance']:+.1%}")
+    d4.metric("Spread", f"{order_book['spread_pct']:.4f}%")
+    st.write(
+        f"Nearest visible bid wall: **{order_book['bid_wall'][0]:,.4f}** "
+        f"(qty {order_book['bid_wall'][1]:,.3f})  |  "
+        f"Nearest visible ask wall: **{order_book['ask_wall'][0]:,.4f}** "
+        f"(qty {order_book['ask_wall'][1]:,.3f})"
+    )
+    st.caption("DOM is a live snapshot of displayed limit orders. Orders can be cancelled or moved; visible walls are not guaranteed support/resistance.")
+else:
+    st.warning(f"Order book unavailable: {book_error}")
+
+st.subheader("🧲 Absorption & Market Reversal")
+a1, a2, a3, a4 = st.columns(4)
+a1.metric("Bullish absorption", "Possible" if reversal["bullish_absorption"] else "Not detected")
+a2.metric("Bearish absorption", "Possible" if reversal["bearish_absorption"] else "Not detected")
+a3.metric("Bullish reversal", "Detected" if reversal["bullish_reversal"] else "Not detected")
+a4.metric("Bearish reversal", "Detected" if reversal["bearish_reversal"] else "Not detected")
+st.caption(
+    f"Volume / 20-candle average: {reversal['volume_ratio']:.2f}x • "
+    f"Lower wick: {reversal['lower_wick_ratio']:.0%} • Upper wick: {reversal['upper_wick_ratio']:.0%} • "
+    f"Buy taker ratio: {last.buy_ratio:.1%}"
+)
+st.info("Absorption is estimated from candle wicks, relative volume and Binance taker-buy volume. It cannot identify hidden orders or prove institutional activity.")
+
+# --------------------------- Multi-timeframe ---------------------------
+
+st.subheader("🕒 Multi-Timeframe Trend")
 mtf_cols = st.columns(3)
-
 for col, tf in zip(mtf_cols, ["15m", "1h", "4h"]):
-
     try:
-
-        tf_raw, _ = get_market_data(
-            symbol, market, tf, 250
-        )
-
+        tf_raw, _ = get_market_data(symbol, market, tf, 250)
         tf_df = add_indicators(tf_raw)
-
         tf_last = tf_df.iloc[-1]
-
         if tf_last.close > tf_last.ema50 > tf_last.ema200:
-
-            mtf_state = "Bullish"
-
+            state = "Bullish"
         elif tf_last.close < tf_last.ema50 < tf_last.ema200:
-
-            mtf_state = "Bearish"
-
+            state = "Bearish"
         else:
+            state = "Mixed"
+        col.metric(tf, state, f"Close {tf_last.close:,.4f}")
+    except Exception:
+        col.metric(tf, "Unavailable", "Could not load")
 
-            mtf_state = "Mixed"
+# --------------------------- Trade plan ---------------------------
 
-        col.metric(
-            tf,
-            mtf_state,
-            f"Close {tf_last.close:,.4f}"
-        )
+st.subheader("🎯 Entry Zone • Stop Loss • Take Profit Plan")
+atr = float(last.atr) if pd.notna(last.atr) else np.nan
+entry_low = entry_high = entry_mid = stop = tp1 = tp2 = tp3 = qty = np.nan
+risk_amount = balance * risk_pct / 100
+setup_note = "No trade plan: wait for a valid signal."
 
-    except Exception as e:
+if signal in ["BUY", "LONG", "SHORT"] and np.isfinite(atr) and atr > 0:
+    if signal in ["BUY", "LONG"]:
+        # Pullback zone around current price / nearest support; invalidation below structure.
+        entry_low = max(support, current_price - 0.35 * atr)
+        entry_high = current_price + 0.10 * atr
+        if entry_low > entry_high:
+            entry_low = current_price - 0.20 * atr
+        entry_mid = (entry_low + entry_high) / 2
+        stop_anchor = min(support, float(df.low.tail(12).min()))
+        stop = stop_anchor - 0.25 * atr
+        if stop >= entry_mid:
+            stop = entry_mid - 1.5 * atr
+        risk_per_unit = entry_mid - stop
+        tp1, tp2, tp3 = entry_mid + rr1*risk_per_unit, entry_mid + rr2*risk_per_unit, entry_mid + rr3*risk_per_unit
+        setup_note = "Long setup: prefer a pullback into the entry zone, then wait for bullish candle/structure confirmation."
+    else:
+        entry_low = current_price - 0.10 * atr
+        entry_high = min(resistance, current_price + 0.35 * atr)
+        if entry_high < entry_low:
+            entry_high = current_price + 0.20 * atr
+        entry_mid = (entry_low + entry_high) / 2
+        stop_anchor = max(resistance, float(df.high.tail(12).max()))
+        stop = stop_anchor + 0.25 * atr
+        if stop <= entry_mid:
+            stop = entry_mid + 1.5 * atr
+        risk_per_unit = stop - entry_mid
+        tp1, tp2, tp3 = entry_mid - rr1*risk_per_unit, entry_mid - rr2*risk_per_unit, entry_mid - rr3*risk_per_unit
+        setup_note = "Short setup: prefer a pullback into the entry zone, then wait for bearish candle/structure confirmation."
 
-        col.metric(
-            tf,
-            "Unavailable",
-            "Could not load"
-        )
+    if risk_per_unit > 0:
+        qty = risk_amount / risk_per_unit if risk_amount > 0 else 0.0
 
-if signal in ["BUY", "LONG", "SHORT"]:
-    st.success(f"Potential {signal} setup meets the selected score threshold. Confirm candle close and higher-timeframe context before trading.")
-elif signal == "NO BUY":
-    st.warning("Bearish conditions detected, but Spot mode does not issue short-selling signals.")
+if np.isfinite(entry_mid):
+    e1, e2, e3 = st.columns(3)
+    e1.metric("Entry zone — low", f"{entry_low:,.4f}")
+    e2.metric("Preferred entry (mid)", f"{entry_mid:,.4f}")
+    e3.metric("Entry zone — high", f"{entry_high:,.4f}")
+
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric("Stop Loss", f"{stop:,.4f}")
+    r2.metric(f"TP1 ({rr1:g}R)", f"{tp1:,.4f}")
+    r3.metric(f"TP2 ({rr2:g}R)", f"{tp2:,.4f}")
+    r4.metric(f"TP3 ({rr3:g}R)", f"{tp3:,.4f}")
+
+    risk_pct_from_entry = abs(entry_mid - stop) / entry_mid * 100
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Risk budget", f"{risk_amount:,.2f} USDT")
+    p2.metric("Stop distance", f"{risk_pct_from_entry:.2f}%")
+    p3.metric("Estimated quantity", f"{qty:.6f}")
+    st.success(setup_note)
+    st.caption("Levels are algorithmic estimates from ATR and recent swing structure. They are not guaranteed execution prices. Recalculate if price moves materially before entry.")
 else:
-    st.warning("No trade: confluence threshold not met. Waiting is a valid trading decision.")
+    st.warning(setup_note)
 
-left, right = st.columns([1.7,1])
+# --------------------------- Charts + scoring ---------------------------
+
+left, right = st.columns([1.7, 1])
 with left:
-    st.subheader("Price Chart")
+    st.subheader("Price Chart with Levels")
     fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df.time, open=df.open, high=df.high, low=df.low, close=df.close, name="Candles"))
-    for col, label in [("ema21","EMA 21"),("ema50","EMA 50"),("ema200","EMA 200"),("vwap","VWAP")]:
-        fig.add_trace(go.Scatter(x=df.time, y=df[col], mode="lines", name=label))
-    fig.update_layout(height=560, xaxis_rangeslider_visible=False, legend_orientation="h")
+    fig.add_trace(go.Candlestick(
+        x=df.time, open=df.open, high=df.high, low=df.low, close=df.close, name="Candles"
+    ))
+    for col_name, label in [("ema21", "EMA 21"), ("ema50", "EMA 50"), ("ema200", "EMA 200"), ("vwap", "VWAP")]:
+        fig.add_trace(go.Scatter(x=df.time, y=df[col_name], mode="lines", name=label))
+    for level, label in [(support, "Support"), (resistance, "Resistance")]:
+        fig.add_hline(y=level, line_dash="dot", annotation_text=label)
+    if np.isfinite(stop):
+        for level, label in [(entry_low, "Entry low"), (entry_high, "Entry high"), (stop, "Stop"), (tp1, "TP1"), (tp2, "TP2"), (tp3, "TP3")]:
+            fig.add_hline(y=level, line_dash="dash", annotation_text=label)
+    fig.update_layout(height=620, xaxis_rangeslider_visible=False, legend_orientation="h")
     st.plotly_chart(fig, use_container_width=True)
+
 with right:
     st.subheader("Strategy Confirmation")
-    st.dataframe(pd.DataFrame(checks, columns=["Strategy","State","Weight"]), hide_index=True, use_container_width=True)
+    st.dataframe(
+        pd.DataFrame(checks, columns=["Condition", "State", "Weight"]),
+        hide_index=True, use_container_width=True,
+    )
     st.markdown("**Analysis notes**")
     for item in reasons:
         st.write("• " + item)
 
-st.subheader("Trade Planning – Risk First")
-p1,p2,p3 = st.columns(3)
-p1.metric("Risk budget", f"{risk_amount:,.2f} USDT")
-p2.metric("ATR stop distance", f"{atr_stop_distance:,.6f}" if np.isfinite(atr_stop_distance) else "N/A")
-p3.metric("Estimated quantity", f"{qty:.6f}" if np.isfinite(qty) else "N/A")
-if signal in ["BUY","LONG","SHORT"] and np.isfinite(atr_stop_distance):
-    if signal in ["BUY","LONG"]:
-        sl = last.close - atr_stop_distance
-        tp1, tp2 = last.close + 2*atr_stop_distance, last.close + 3*atr_stop_distance
-    else:
-        sl = last.close + atr_stop_distance
-        tp1, tp2 = last.close - 2*atr_stop_distance, last.close - 3*atr_stop_distance
-    a,b,c = st.columns(3)
-    a.metric("Illustrative Stop Loss", f"{sl:,.4f}")
-    b.metric("TP1 (2R)", f"{tp1:,.4f}")
-    c.metric("TP2 (3R)", f"{tp2:,.4f}")
-    st.caption("Illustrative levels only. Adjust for nearby structure, fees, slippage, funding and exchange precision.")
+# --------------------------- Screenshot input ---------------------------
 
-st.subheader("Screenshot Analysis Input")
-uploaded = st.file_uploader("Upload a chart screenshot (PNG/JPG)", type=["png","jpg","jpeg"])
-if uploaded:
-    st.image(uploaded, caption="Uploaded reference screenshot", use_container_width=True)
-    st.info("This starter build displays the screenshot alongside live Binance analysis. Full visual AI chart interpretation requires connecting a vision-model API; the screenshot is not yet automatically interpreted.")
+st.subheader("🖼️ Screenshot Analysis Input")
+uploaded_chart = st.file_uploader(
+    "Upload a chart screenshot (PNG/JPG)",
+    type=["png", "jpg", "jpeg"],
+)
+if uploaded_chart is not None:
+    st.image(
+        uploaded_chart,
+        caption="Uploaded chart reference",
+        use_container_width=True,
+    )
+    st.info(
+        "The screenshot is displayed as a reference only. "
+        "This version does not automatically interpret chart images."
+    )
 
-st.subheader("Telegram Alerts")
-alert_text = (f"AI Trading Analyst PRO\\n{symbol} | {market} | {interval}\\nSignal: {signal}\\nLong score: {long_score}/100 | Short score: {short_score}/100\\nPrice: {last.close}\\nRisk budget: {risk_amount:.2f} USDT\\nEducational signal only; verify before trading.")
+# --------------------------- Alerts + export ---------------------------
+
+st.subheader("🔔 Telegram Alert")
+alert_text = (
+    f"AI Trading Analyst PRO\n{symbol} | {market} | {interval}\n"
+    f"Signal: {signal} | Long {long_score}/100 | Short {short_score}/100\n"
+    f"Price: {current_price}\nSupport: {support} | Resistance: {resistance}\n"
+)
+if np.isfinite(entry_mid):
+    alert_text += (
+        f"Entry zone: {entry_low} - {entry_high}\nStop: {stop}\n"
+        f"TP1: {tp1} | TP2: {tp2} | TP3: {tp3}\n"
+    )
+alert_text += "Educational analysis only; verify before trading."
 if st.button("Send current analysis to Telegram"):
-    ok, msg = send_telegram(alert_text)
-    st.success(msg) if ok else st.warning(msg)
+    ok, message = send_telegram(alert_text)
+    st.success(message) if ok else st.warning(message)
 
-st.subheader("Data Export")
-csv = df.to_csv(index=False).encode("utf-8")
-st.download_button("Download candles + indicators (CSV)", csv, file_name=f"{symbol}_{interval}_analysis.csv", mime="text/csv")
+st.subheader("📥 Data Export")
+csv_data = df.to_csv(index=False).encode("utf-8")
+st.download_button(
+    "Download candles + indicators (CSV)", csv_data,
+    file_name=f"{symbol}_{interval}_analysis.csv", mime="text/csv",
+)
 
-with st.expander("Methodology & limitations"):
+with st.expander("Methodology, assumptions & limitations"):
     st.markdown("""
-    - Scores are rule-based confluence scores, **not probabilities or predicted win rates**.
-    - SMC, support/resistance, divergence and Elliott-wave components are simplified proxies in this starter build.
-    - Elliott Wave requires subjective swing labeling; this app does not claim a formal wave count.
-    - ATR-based sizing is an estimate and excludes fees, slippage, funding, liquidation risk and contract specifications.
-    - No order execution is implemented. No Binance API key is required for public market data.
-    - Test with historical out-of-sample data and paper trading before risking capital.
+    - **Entry zone:** an estimated pullback area around the current price and nearest structure.
+    - **Stop loss:** placed beyond a recent swing/support/resistance with an ATR buffer.
+    - **TP targets:** calculated from configurable risk/reward multiples (R).
+    - **Support/resistance:** recent local swing highs/lows; levels are estimates, not guaranteed barriers.
+    - **DOM liquidity:** current public order-book snapshot, not a record of executed trades.
+    - **Absorption:** heuristic using wick size, relative volume and taker-buy ratio; hidden liquidity cannot be verified from this feed.
+    - **Market reversal:** rejection candle and/or sweep-and-reclaim heuristic, not a prediction.
+    - Scores are rule-based confluence points, not probabilities or guaranteed win rates.
+    - Quantity estimate excludes fees, slippage, funding, leverage, liquidation risk, lot size and contract specifications.
+    - No orders are placed and no API trading key is requested.
+    - Backtest and paper-trade before risking capital. This tool is educational, not financial advice.
     """)
-st.caption("AI Trading Analyst PRO v1.0 | Signal-only prototype | Not financial advice")
+st.caption("AI Trading Analyst PRO v2.0 • Signal-only tool • Not financial advice")

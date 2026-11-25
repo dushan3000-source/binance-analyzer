@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 st.set_page_config(page_title="AI Trading Analyst PRO", page_icon="📈", layout="wide")
 
-SPOT_BASE = "https://api.binance.com"
+SPOT_BASE = "https://data-api.binance.vision"
 FUTURES_BASE = "https://fapi.binance.com"
 INTERVALS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"]
 

@@ -121,11 +121,7 @@ def get_market_data(symbol, market, interval, limit=500):
 
     df["time"] = df["open_time"]
 
-    return df, current_price
-
-
-       else:
-               for c in ["open", "high", "low", "close", "volume"]:
+        for c in ["open", "high", "low", "close", "volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     df["open_time"] = pd.to_datetime(
@@ -137,95 +133,6 @@ def get_market_data(symbol, market, interval, limit=500):
     df["time"] = df["open_time"]
 
     return df, current_price
-        # Binance USD-M Futures public API
-           
-        url = f"{FUTURES_BASE}/fapi/v1/klines"
-
-        r = requests.get(
-            url,
-            params={
-                "symbol": symbol,
-                "interval": interval,
-                "limit": limit
-            },
-            timeout=20
-        )
-        r.raise_for_status()
-
-        raw = r.json()
-
-        cols = [
-            "open_time", "open", "high", "low", "close",
-            "volume", "close_time", "quote_volume", "trades",
-            "taker_buy_base", "taker_buy_quote", "ignore"
-        ]
-
-        df = pd.DataFrame(raw, columns=cols)
-
-        quote_url = f"{FUTURES_BASE}/fapi/v1/ticker/price"
-
-        qr = requests.get(
-            quote_url,
-            params={"symbol": symbol},
-            timeout=20
-        )
-        qr.raise_for_status()
-
-        current_price = float(qr.json()["price"])
-
-        if not bars:
-            raise ValueError(
-                f"No Futures candle data found for {symbol}"
-            )
-
-        df = pd.DataFrame(bars)
-
-        df = df.rename(columns={
-            "openTime": "open_time",
-            "closeTime": "close_time",
-            "quoteVolume": "quote_volume",
-            "takerBuyVolume": "taker_buy_base",
-            "takerBuyQuoteVolume": "taker_buy_quote"
-        })
-
-        df["trades"] = 0
-        df["ignore"] = 0
-
-        # Get live Futures quote
-        quote_url = (
-            "https://api.coinbeacon.io/public/market/quotes/batch"
-        )
-
-        qr = requests.get(
-            quote_url,
-            headers=headers,
-            params={"m": f"binance-futures:{symbol}"},
-            timeout=20
-        )
-        qr.raise_for_status()
-
-        quotes = qr.json().get("quotes", [])
-
-        if not quotes or quotes[0].get("price") is None:
-            raise ValueError("Futures live price unavailable")
-
-        current_price = float(quotes[0]["price"])
-
-    for c in ["open", "high", "low", "close", "volume"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    if market == "Spot":
-        df["open_time"] = pd.to_datetime(
-            df["open_time"], unit="ms", utc=True
-        )
-    else:
-        df["open_time"] = pd.to_datetime(
-            df["open_time"], unit="ms", utc=True
-        )
-        df["time"] = df["open_time"]
-
-    return df, current_price
-
 
 def add_indicators(df):
     d = df.copy()

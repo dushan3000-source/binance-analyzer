@@ -40,13 +40,16 @@ with st.sidebar:
     refresh = st.button("🔄 Refresh market data", use_container_width=True)
 
 
+```python
 @st.cache_data(ttl=15)
 def get_market_data(symbol, market, interval, limit=500):
 
     symbol = symbol.upper().replace("/", "").replace("-", "")
 
     if market == "Spot":
-        url = "https://data-api.binance.vision/api/v3/klines"
+
+        url = f"{SPOT_BASE}/api/v3/klines"
+
         r = requests.get(
             url,
             params={
@@ -56,6 +59,7 @@ def get_market_data(symbol, market, interval, limit=500):
             },
             timeout=20
         )
+
         r.raise_for_status()
         raw = r.json()
 
@@ -67,12 +71,58 @@ def get_market_data(symbol, market, interval, limit=500):
 
         df = pd.DataFrame(raw, columns=cols)
 
-        price_url = "https://data-api.binance.vision/api/v3/ticker/price"
-        pr = requests.get(
-            price_url, params={"symbol": symbol}, timeout=20
+        price_url = f"{SPOT_BASE}/api/v3/ticker/price"
+
+    else:
+
+        url = f"{FUTURES_BASE}/fapi/v1/klines"
+
+        r = requests.get(
+            url,
+            params={
+                "symbol": symbol,
+                "interval": interval,
+                "limit": limit
+            },
+            timeout=20
         )
-        pr.raise_for_status()
-        current_price = float(pr.json()["price"])
+
+        r.raise_for_status()
+        raw = r.json()
+
+        cols = [
+            "open_time", "open", "high", "low", "close",
+            "volume", "close_time", "quote_volume", "trades",
+            "taker_buy_base", "taker_buy_quote", "ignore"
+        ]
+
+        df = pd.DataFrame(raw, columns=cols)
+
+        price_url = f"{FUTURES_BASE}/fapi/v1/ticker/price"
+
+    pr = requests.get(
+        price_url,
+        params={"symbol": symbol},
+        timeout=20
+    )
+
+    pr.raise_for_status()
+
+    current_price = float(pr.json()["price"])
+
+    for c in ["open", "high", "low", "close", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df["open_time"] = pd.to_datetime(
+        df["open_time"],
+        unit="ms",
+        utc=True
+    )
+
+    df["time"] = df["open_time"]
+
+    return df, current_price
+```
 
        else:
         # Binance USD-M Futures public API

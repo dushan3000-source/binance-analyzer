@@ -243,7 +243,15 @@ def add_indicators(df):
     d["pivot_low"] = low.where((low == low.rolling(11, center=True).min()))
     return d
 
-add("TSI Divergence", bull_div, bear_div, 15,
+add(
+    "TSI Divergence",
+    bull_div,
+    bear_div,
+    15,
+    "Bullish divergence" if bull_div
+    else "Bearish divergence" if bear_div
+    else "No divergence"
+)
     # Heuristic swing comparison; not a full pivot-confirmed divergence engine.
     if len(d) < 40:
         return False, False
@@ -258,6 +266,32 @@ add("TSI Divergence", bull_div, bear_div, 15,
     bear = high2 > high1 and rsi_high2 < rsi_high1
     return bool(bull), bool(bear)
 add("TSI Divergence"...
+def divergence_flags(d):
+
+    if len(d) < 40:
+        return False, False
+
+    recent = d.tail(30).reset_index(drop=True)
+
+    p1 = recent.iloc[:15]
+    p2 = recent.iloc[15:]
+
+    low1, low2 = p1.low.min(), p2.low.min()
+
+    tsi_low1 = p1.loc[p1.low.idxmin(), "tsi"]
+    tsi_low2 = p2.loc[p2.low.idxmin(), "tsi"]
+
+    high1, high2 = p1.high.max(), p2.high.max()
+
+    tsi_high1 = p1.loc[p1.high.idxmax(), "tsi"]
+    tsi_high2 = p2.loc[p2.high.idxmax(), "tsi"]
+
+    bull = low2 < low1 and tsi_low2 > tsi_low1
+
+    bear = high2 > high1 and tsi_high2 < tsi_high1
+
+    return bool(bull), bool(bear)
+
 def analyze(d):
     last = d.iloc[-1]
     prev = d.iloc[-2]

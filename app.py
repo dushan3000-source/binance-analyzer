@@ -256,9 +256,25 @@ if refresh:
     st.cache_data.clear()
 
 try:
-    with st.spinner("Fetching Binance market data..."):
-        raw = fetch_klines(symbol, interval, limit, market)
+    with st.spinner("Fetching market data..."):
+        raw, current_price = get_market_data(
+            symbol, market, interval, limit
+        )
         df = add_indicators(raw)
+
+    if len(df) < 210:
+        st.warning(
+            "For EMA200 and stable analysis, load at least 210 candles."
+        )
+
+    long_score, short_score, checks, reasons, bull_div, bear_div = analyze(df)
+
+except Exception as e:
+    st.error(f"Could not load market data: {e}")
+    st.info(
+        "Check the symbol, API connection, and market settings."
+    )
+    st.stop()
     if len(df) < 210:
         st.warning("For EMA200 and stable analysis, load at least 210 candles.")
     long_score, short_score, checks, reasons, bull_div, bear_div = analyze(df)

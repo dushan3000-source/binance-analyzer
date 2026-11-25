@@ -159,8 +159,8 @@ def get_market_data(symbol, market, interval, limit=500):
         df["open_time"] = pd.to_datetime(
             df["open_time"], unit="ms", utc=True
         )
-    df["time"] = df["open_time"]
-    return df, current_price
+        df["time"] = df["open_time"]
+
     return df, current_price
 
 

@@ -40,7 +40,7 @@ with st.sidebar:
     refresh = st.button("🔄 Refresh market data", use_container_width=True)
 
 
-```python
+
 @st.cache_data(ttl=15)
 def get_market_data(symbol, market, interval, limit=500):
 
@@ -122,7 +122,7 @@ def get_market_data(symbol, market, interval, limit=500):
     df["time"] = df["open_time"]
 
     return df, current_price
-```
+
 
        else:
         # Binance USD-M Futures public API
@@ -257,7 +257,7 @@ add("TSI Divergence", bull_div, bear_div, 15,
     bull = low2 < low1 and rsi_low2 > rsi_low1
     bear = high2 > high1 and rsi_high2 < rsi_high1
     return bool(bull), bool(bear)
-
+add("TSI Divergence"...
 def analyze(d):
     last = d.iloc[-1]
     prev = d.iloc[-2]
